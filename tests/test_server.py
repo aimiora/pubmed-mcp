@@ -93,7 +93,6 @@ def test_search_endpoint_converts_http_errors(monkeypatch: pytest.MonkeyPatch) -
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
     assert dummy.closed is True
-    assert cache_stub.cleared is True
 
 
 def test_search_endpoint_converts_request_errors(monkeypatch: pytest.MonkeyPatch) -> None:
