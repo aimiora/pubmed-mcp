@@ -21,6 +21,14 @@ pip install -e .
 pip install -e .[dev]
 ```
 
+If you're in a restricted environment where build isolation cannot download
+`setuptools`, rerun the install with build isolation disabled so it reuses the
+system packages:
+
+```bash
+pip install --no-build-isolation -e .[dev]
+```
+
 ### 2. (Optional) Configure an API key
 
 Set `PUBMED_API_KEY` or `NCBI_API_KEY` with your NCBI E-Utilities API key to unlock higher throughput.
@@ -59,5 +67,14 @@ pytest
 ## Development notes
 
 - The `PubMedClient` handles eSearch and eSummary requests and merges them into a list of `ArticleSummary` dataclasses.
-- The FastAPI app caches a single client instance and gracefully closes it during shutdown.
-- Tests use `respx` to simulate PubMed responses, keeping the suite fast and deterministic.
+- The FastAPI app creates a fresh `PubMedClient` per request and closes it automatically once the response is sent.
+- Tests rely on `httpx.MockTransport` to simulate PubMed responses, keeping the suite fast and deterministic.
+
+## Using with ChatGPT's MCP connector
+
+1. Start the server (see [Launch the HTTP server](#3-launch-the-http-server)). Ensure the machine is reachable from ChatGPT
+   (e.g., via port forwarding, tunneling, or hosting on a public network).
+2. Note the base URL, typically `http://localhost:8000/` when running locally. **Provide only the URL** in ChatGPT's connector
+   configuration—passing a shell command such as `curl "http://localhost:8000/..."` will be rejected as an unsafe URL.
+3. In ChatGPT, add a new MCP connector and supply the base URL along with any required authentication details (if applicable).
+4. Test the connection: ChatGPT should be able to call `GET /health` for readiness and `GET /articles/search` to fetch PubMed summaries.
