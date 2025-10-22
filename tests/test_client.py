@@ -1,15 +1,24 @@
+import asyncio
 from typing import Any
 
+import httpx
 import pytest
-import respx
 
 from pubmed_mcp.client import PubMedClient
 
 
-@pytest.mark.anyio
-async def test_search_returns_summaries() -> None:
-    client = PubMedClient()
+def _build_mock_transport(esearch_payload: dict[str, Any], esummary_payload: dict[str, Any]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("esearch.fcgi"):
+            return httpx.Response(200, json=esearch_payload)
+        if request.url.path.endswith("esummary.fcgi"):
+            return httpx.Response(200, json=esummary_payload)
+        raise AssertionError(f"Unexpected URL requested: {request.url}")
 
+    return httpx.MockTransport(handler)
+
+
+def test_search_returns_summaries() -> None:
     esearch_payload: dict[str, Any] = {
         "esearchresult": {
             "idlist": ["123", "456"],
@@ -35,17 +44,17 @@ async def test_search_returns_summaries() -> None:
         }
     }
 
-    with respx.mock(assert_all_called=True) as mock:
-        mock.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi").respond(
-            json=esearch_payload
-        )
-        mock.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi").respond(
-            json=esummary_payload
-        )
+    transport = _build_mock_transport(esearch_payload, esummary_payload)
+    http_client = httpx.AsyncClient(transport=transport)
+    client = PubMedClient(http_client=http_client)
 
-        results = await client.search("cancer", limit=5)
+    async def run_search() -> list:
+        try:
+            return await client.search("cancer", limit=5)
+        finally:
+            await http_client.aclose()
 
-    await client.aclose()
+    results = asyncio.run(run_search())
 
     assert len(results) == 2
     assert results[0].pmid == "123"
@@ -53,9 +62,14 @@ async def test_search_returns_summaries() -> None:
     assert results[1].journal == "Testing Reports"
 
 
-@pytest.mark.anyio
-async def test_search_rejects_blank_query() -> None:
+def test_search_rejects_blank_query() -> None:
     client = PubMedClient()
+
+    async def run_blank_search() -> None:
+        try:
+            await client.search("  ")
+        finally:
+            await client.aclose()
+
     with pytest.raises(ValueError):
-        await client.search("  ")
-    await client.aclose()
+        asyncio.run(run_blank_search())
