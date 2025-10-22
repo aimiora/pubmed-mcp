@@ -1,7 +1,7 @@
 """HTTP server exposing PubMed search functionality."""
 from __future__ import annotations
 
-import functools
+from collections.abc import AsyncIterator
 from typing import List
 
 import httpx
@@ -15,13 +15,12 @@ def _get_client() -> PubMedClient:
     return PubMedClient.from_env()
 
 
-@functools.lru_cache
-def get_cached_client() -> PubMedClient:
-    return _get_client()
-
-
-async def get_client_dependency() -> PubMedClient:
-    return get_cached_client()
+async def get_client_dependency() -> AsyncIterator[PubMedClient]:
+    client = _get_client()
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 class ArticleSummaryModel(BaseModel):
@@ -49,13 +48,6 @@ app = FastAPI(
     description="Search PubMed articles and retrieve structured summaries.",
     version="0.1.0",
 )
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    client = get_cached_client()
-    await client.aclose()
-    get_cached_client.cache_clear()
 
 
 @app.get("/health")
