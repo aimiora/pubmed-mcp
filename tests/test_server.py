@@ -25,10 +25,21 @@ class DummyClient:
         self.closed = True
 
 
+class CachedClientStub:
+    def __init__(self, client: DummyClient) -> None:
+        self.client = client
+        self.cleared = False
+
+    def __call__(self) -> DummyClient:
+        return self.client
+
+    def cache_clear(self) -> None:
+        self.cleared = True
+
+
 def _run_with_client(func: Callable[[httpx.AsyncClient], Awaitable[Any]]):
     async def _run() -> Any:
-        transport = httpx.ASGITransport(app=server.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        async with httpx.AsyncClient(app=server.app, base_url="http://test") as async_client:
             return await func(async_client)
 
     return asyncio.run(_run())
@@ -54,7 +65,8 @@ def test_search_endpoint_returns_results(monkeypatch: pytest.MonkeyPatch) -> Non
             )
         ]
     )
-    monkeypatch.setattr(server, "_get_client", lambda: dummy)
+    cache_stub = CachedClientStub(dummy)
+    monkeypatch.setattr(server, "get_cached_client", cache_stub)
 
     response = _run_with_client(lambda client: client.get("/articles/search", params={"q": "genetics", "limit": 1}))
 
@@ -65,6 +77,7 @@ def test_search_endpoint_returns_results(monkeypatch: pytest.MonkeyPatch) -> Non
     assert payload["results"][0]["pmid"] == "1"
     assert dummy.calls == [("genetics", 1)]
     assert dummy.closed is True
+    assert cache_stub.cleared is True
 
 
 def test_search_endpoint_converts_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,7 +85,8 @@ def test_search_endpoint_converts_http_errors(monkeypatch: pytest.MonkeyPatch) -
     response = httpx.Response(404, request=request)
     error = httpx.HTTPStatusError("not found", request=request, response=response)
     dummy = DummyClient(error=error)
-    monkeypatch.setattr(server, "_get_client", lambda: dummy)
+    cache_stub = CachedClientStub(dummy)
+    monkeypatch.setattr(server, "get_cached_client", cache_stub)
 
     response = _run_with_client(lambda client: client.get("/articles/search", params={"q": "missing"}))
 
@@ -85,10 +99,12 @@ def test_search_endpoint_converts_request_errors(monkeypatch: pytest.MonkeyPatch
     request = httpx.Request("GET", "https://example.test")
     error = httpx.RequestError("boom", request=request)
     dummy = DummyClient(error=error)
-    monkeypatch.setattr(server, "_get_client", lambda: dummy)
+    cache_stub = CachedClientStub(dummy)
+    monkeypatch.setattr(server, "get_cached_client", cache_stub)
 
     response = _run_with_client(lambda client: client.get("/articles/search", params={"q": "oops"}))
 
     assert response.status_code == 502
     assert "boom" in response.json()["detail"]
     assert dummy.closed is True
+    assert cache_stub.cleared is True
